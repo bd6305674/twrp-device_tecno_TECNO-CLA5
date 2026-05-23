@@ -1,0 +1,141 @@
+name: Build OrangeFox Recovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    env:
+      CCACHE_DIR: ${{ github.workspace }}/work/.ccache
+
+    steps:
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: device-tree
+
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          large-packages: false
+          tool-cache: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc \
+            bison \
+            build-essential \
+            ccache \
+            curl \
+            flex \
+            g++-multilib \
+            gcc-multilib \
+            git \
+            git-lfs \
+            gnupg \
+            gperf \
+            imagemagick \
+            lib32ncurses5-dev \
+            lib32readline-dev \
+            lib32z1-dev \
+            liblz4-tool \
+            libncurses5 \
+            libncurses5-dev \
+            libsdl1.2-dev \
+            libssl-dev \
+            libxml2 \
+            libxml2-utils \
+            lzop \
+            openjdk-11-jdk \
+            pngcrush \
+            python3 \
+            repo \
+            rsync \
+            schedtool \
+            squashfs-tools \
+            xsltproc \
+            zip \
+            zlib1g-dev
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ runner.os }}-ccache-${{ github.ref_name }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Initialize OrangeFox source
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p work
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git orangefox-sync
+          cd orangefox-sync
+          ./orangefox_sync.sh --branch 12.1 --path "${GITHUB_WORKSPACE}/work"
+
+      - name: Add device dependencies
+        working-directory: ${{ github.workspace }}/work
+        run: |
+          mkdir -p device/tecno
+          rsync -a --delete "${GITHUB_WORKSPACE}/device-tree/" device/tecno/TECNO-CLA5/
+          cat > device/tecno/TECNO-CLA5/vendorsetup.sh <<'EOF'
+          #!/bin/sh
+          # CI: dependencies are prepared explicitly in the workflow.
+          EOF
+          if [ -d device/transsion/mt6789-common/.git ]; then
+            git -C device/transsion/mt6789-common fetch --depth=1 origin fox_12.1
+            git -C device/transsion/mt6789-common checkout -B fox_12.1 FETCH_HEAD
+          else
+            rm -rf device/transsion/mt6789-common
+            git clone --depth=1 -b fox_12.1 \
+              https://github.com/transsion-mt6789/twrp-device_transsion_mt6789-common.git \
+              device/transsion/mt6789-common
+          fi
+          cat > device/transsion/mt6789-common/vendorsetup.sh <<'EOF'
+          #!/bin/sh
+          # CI: dependencies are prepared explicitly in the workflow.
+          EOF
+
+      - name: Build vendor boot image
+        working-directory: ${{ github.workspace }}/work
+        run: |
+          set -x
+          export USE_CCACHE=1
+          export CCACHE_EXEC="$(command -v ccache)"
+          ccache -M 10G
+          set +e
+          source build/envsetup.sh
+          ENVSETUP_STATUS=$?
+          set -e
+          echo "envsetup exit status: ${ENVSETUP_STATUS}"
+          lunch twrp_CLA5-eng || {
+            echo "lunch failed"
+            exit 1
+          }
+          mka vendorbootimage || {
+            echo "mka vendorbootimage failed"
+            exit 1
+          }
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-TECNO-CLA5
+          if-no-files-found: error
+          path: |
+            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*.zip
+            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*.md5
+            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*vendor_boot*.img
+            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*boot*.img
+            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*.img
