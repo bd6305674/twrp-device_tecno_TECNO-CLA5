@@ -4,7 +4,7 @@ This tree builds OrangeFox/TWRP for the TECNO CAMON 30S (`CLA5`).
 
 ## Install
 
-This device uses a `vendor_boot`-style recovery layout. Do not try to first-install from the OrangeFox zip in stock recovery.
+This device uses a `vendor_boot`-style recovery layout.
 
 ### Requirements
 
