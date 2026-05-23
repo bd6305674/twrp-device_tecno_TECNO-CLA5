@@ -1,12 +1,14 @@
-name: Build OrangeFox Recovery
+name: Release OrangeFox Vendor Boot
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - master
-  pull_request:
+    inputs:
+      tag:
+        description: Release tag (example: v1.0.0)
+        required: true
+      release_name:
+        description: Release title
+        required: true
 
 jobs:
   build:
@@ -70,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ${{ runner.os }}-ccache-${{ github.ref_name }}
+          key: ${{ runner.os }}-ccache-release-${{ github.event.inputs.tag }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
@@ -110,7 +112,6 @@ jobs:
       - name: Build vendor boot image
         working-directory: ${{ github.workspace }}/work
         run: |
-          set -x
           export USE_CCACHE=1
           export CCACHE_EXEC="$(command -v ccache)"
           ccache -M 10G
@@ -119,19 +120,24 @@ jobs:
           ENVSETUP_STATUS=$?
           set -e
           echo "envsetup exit status: ${ENVSETUP_STATUS}"
-          lunch twrp_CLA5-eng || {
-            echo "lunch failed"
-            exit 1
-          }
-          mka vendorbootimage || {
-            echo "mka vendorbootimage failed"
-            exit 1
-          }
+          lunch twrp_CLA5-eng
+          mka vendorbootimage
 
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+      - name: Collect release files
+        id: collect
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p release-assets
+          cp work/out/target/product/TECNO-CLA5/*vendor_boot*.img release-assets/
+          if ls work/out/target/product/TECNO-CLA5/*vendor_boot*.img >/dev/null 2>&1; then
+            sha256sum work/out/target/product/TECNO-CLA5/*vendor_boot*.img > release-assets/SHA256SUMS.txt
+          fi
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          name: OrangeFox-TECNO-CLA5
-          if-no-files-found: error
-          path: |
-            ${{ github.workspace }}/work/out/target/product/TECNO-CLA5/*vendor_boot*.img
+          tag_name: ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.release_name }}
+          generate_release_notes: true
+          files: |
+            release-assets/*
